@@ -155,8 +155,9 @@ class RelativeActionLoader:
         action_key = f"action.{self.action_key}"
 
         # Convert to numpy arrays once - this is much faster than repeated pandas access
-        state_data = df[state_key].values  # Shape: (episode_length, joint_dim)
-        action_data = df[action_key].values  # Shape: (episode_length, joint_dim)
+        # Need to stack because pandas stores arrays as objects
+        state_data = np.stack(df[state_key].values)  # Shape: (episode_length, joint_dim)
+        action_data = np.stack(df[action_key].values)  # Shape: (episode_length, joint_dim)
         trajectories = []
         usable_length = len(df) - self.modality_configs["action"].delta_indices[-1]
         action_delta_indices = np.array(self.modality_configs["action"].delta_indices)
@@ -166,9 +167,8 @@ class RelativeActionLoader:
             last_state = state_data[state_ind]
             actions = action_data[action_inds]
             if self.action_config.type == ActionType.EEF:
-                # raise NotImplementedError("EEF action is not yet supported")
-                assert len(last_state) == 9  # xyz + rot6d
-                assert actions.shape[1] == 9  # xyz + rot6d
+                assert len(last_state) == 9, f"Expected 9D EEF state (xyz + rot6d), got {len(last_state)}"
+                assert actions.shape[1] == 9, f"Expected 9D EEF action (xyz + rot6d), got shape {actions.shape}"
 
                 reference_frame = EndEffectorPose(
                     translation=last_state[:3],
@@ -183,9 +183,11 @@ class RelativeActionLoader:
                     ]
                 ).relative_chunking(reference_frame=reference_frame)
 
-                raise NotImplementedError(
-                    "EEF action is not yet supported, need to handle rotation transformation based on action format"
-                )
+                # Extract translation and rotation from relative poses using xyz_rot6d property
+                trajectories.append(np.stack(
+                    [p.xyz_rot6d for p in traj.poses],
+                    dtype=np.float32
+                ))
             elif self.action_config.type == ActionType.NON_EEF:
                 reference_frame = JointPose(last_state)
                 traj = JointActionChunk([JointPose(m) for m in actions]).relative_chunking(
